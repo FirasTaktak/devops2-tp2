@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "TP2 - PostgreSQL",
+      "Group": "DevOps 2",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "strapi",
+      "SSLMode": "prefer"
+    }
+  }
+}
