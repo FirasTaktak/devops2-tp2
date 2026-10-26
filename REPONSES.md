@@ -80,17 +80,18 @@ le reste du code pour profiter du **cache de couches Docker**. Tant que les fich
 dépendances ne changent pas, la couche `npm ci` (longue) est réutilisée telle quelle. Seules les
 couches suivantes sont rejouées quand le code change.
 
-Si on modifie un fichier de `backend/config/` et qu'on relance le build : `npm ci` est **caché**
-(non rejoué), puis `COPY . .`, `RUN npm run build` et les étapes de l'image finale sont rejouées
-(copie finale et export de l'image). Sans cette séparation, chaque modification de code
-réinstallerait toutes les dépendances.
+Si on modifie un fichier de `backend/config/` et qu'on relance le build : les étapes jusqu'à
+`RUN npm ci` sont **en cache** (`CACHED`) ; à partir de `COPY . .` (le contenu a changé), toutes
+les étapes suivantes sont rejouées : `COPY . .`, `RUN npm run build`, puis la copie
+`COPY --from=build` de l'image finale et l'export de l'image. Sans cette séparation, chaque
+modification de code réinstallerait toutes les dépendances.
 
 ### Q7
 
 - `USER node` fait tourner le processus Strapi avec l'utilisateur non privilégié `node` fourni par
   l'image Node. Si l'application est compromise, l'attaquant n'a pas les droits `root` dans le
   conteneur (principe du moindre privilège).
-- `--chown=node:node` attribue les fichiers copiés à l'utilisateur/groupe `node` : sans cela, ils
+- `--chown=node:node` (option de `COPY`) attribue les fichiers copiés à l'utilisateur/groupe `node` : sans cela, ils
   appartiendraient à `root` et l'utilisateur `node` ne pourrait pas les lire ou écrire (uploads,
   fichiers temporaires).
 
@@ -100,9 +101,11 @@ réinstallerait toutes les dépendances.
 qu'une fois que le healthcheck de `postgres` (`pg_isready`) est passé, c'est-à-dire que la base
 accepte réellement les connexions.
 
-Sans cette condition, Strapi démarrerait en même temps que PostgreSQL et pourrait échouer à se
-connecter (« connection refused ») pendant l'initialisation de la base, provoquant des erreurs
-ou des redémarrages en boucle.
+Sans cette condition (ou avec la forme courte `depends_on: [postgres]`, qui n'attend que le
+*démarrage* du conteneur et non sa disponibilité), Strapi démarrerait en même temps que
+PostgreSQL et pourrait échouer à se connecter (« connection refused ») pendant l'initialisation
+de la base. Il planterait alors puis serait relancé par `restart: unless-stopped`, d'où des
+erreurs et des redémarrages en boucle au premier lancement.
 
 ### Q9
 
@@ -170,15 +173,31 @@ a été arrêté volontairement** (état « stopped » mémorisé). Il couvre le
 applicatif et le redémarrage du démon Docker.
 
 Après `docker compose stop strapi` (ou `docker compose kill strapi`), l'arrêt est **volontaire** :
-Docker considère que l'administrateur a décidé de l'arrêter et ne le relance pas. Docker ne le
-redémarre automatiquement qu'en cas de **crash** du processus principal, d'`OOM kill`, ou après
-un redémarrage du démon Docker (si le conteneur n'avait pas été stoppé explicitement).
+Docker considère que l'administrateur a décidé de l'arrêter et ne le relance pas. Docker le
+redémarre automatiquement lorsque le processus principal **se termine de lui-même**, quel que soit
+son code de sortie (crash, `OOM kill`, erreur applicative, et même sortie « propre » avec le code
+0), ou après un **redémarrage du démon Docker** (si le conteneur n'avait pas été stoppé
+explicitement). Différence avec `always` : un conteneur arrêté à la main n'est pas relancé au
+redémarrage du démon.
+
+## Partie 7 — Cycle de vie (compléments)
+
+- **Persistance** : après `docker compose down` puis `up -d`, les articles sont toujours présents ;
+  après `docker compose down -v`, la base est recréée vide (voir Q3).
+- **Sauvegarde** : `docker compose exec postgres pg_dump -U strapi strapi > backup.sql`.
+- **Rebuild ciblé** : `docker compose up -d --build frontend` ne reconstruit que l'image du front ;
+  les autres services ne sont pas touchés.
+- **Panne** : après `docker compose stop strapi`, la page <http://localhost:3000> n'a plus accès à
+  l'API : [À COMPLÉTER : message exact affiché par le front]. Le site se rétablit après
+  `docker compose start strapi`.
 
 ## Notes d'exécution
 
-- Compte administrateur Strapi créé : `admin@example.com` / `Admin-tp2-2026!`.
+- Compte administrateur Strapi créé (identifiants non reproduits ici : ils ne doivent pas être
+  versionnés).
 - Rôle *Public* : `find` et `findOne` activés sur `Article` (vérifié via
   `curl http://localhost:1337/api/articles`).
 - 3 articles publiés ; le front `http://localhost:3000` les affiche.
 - Isolation vérifiée depuis le conteneur `frontend` : `nc -zv postgres 5432` échoue
   (`bad address`) et `wget http://strapi:1337/_health` répond `OK`.
+- Captures d'écran : voir `RAPPORT_TP2.pdf` (front et table `articles` dans pgAdmin).
